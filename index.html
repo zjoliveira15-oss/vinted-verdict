@@ -50,7 +50,7 @@
   input[type="text"], input[type="number"], input[type="password"], textarea {
     width: 100%;
     border: 1px solid var(--line); border-radius: 8px;
-    padding: 12px; font-size: 16px; /* 16px stops iOS auto-zoom */
+    padding: 12px; font-size: 16px;
     background: #fff; color: var(--ink);
     font-family: inherit;
   }
@@ -86,6 +86,24 @@
     margin: 8px 0; -webkit-user-select: none; user-select: none;
   }
   .add-photo input { display: none; }
+  .mode-toggle {
+    display: flex; gap: 0; margin-top: 16px;
+    background: #f4f4ef; border: 1px solid var(--line); border-radius: 10px;
+    overflow: hidden; padding: 3px;
+  }
+  .mode-toggle button {
+    flex: 1; background: none; border: none; padding: 10px 12px;
+    font-size: 14px; font-weight: 600; color: var(--muted); cursor: pointer;
+    border-radius: 7px; transition: all 0.1s ease;
+  }
+  .mode-toggle button.active {
+    background: white; color: var(--vinted);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  .mode-toggle button .price-tag {
+    display: block; font-size: 11px; opacity: 0.65; font-weight: 500;
+    margin-top: 1px;
+  }
   button.go {
     width: 100%; background: var(--vinted); color: white; border: none;
     padding: 16px; border-radius: 12px; font-size: 17px; font-weight: 700;
@@ -151,6 +169,20 @@
     background: rgba(255,255,255,0.2); color: inherit; font-weight: 600;
     margin-left: 6px;
   }
+  .cache-banner {
+    background: #fef3c7; color: #78350f; border: 1px solid #fde68a;
+    padding: 8px 12px; border-radius: 8px; font-size: 12px; margin-bottom: 8px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .cache-banner button {
+    background: none; border: 1px solid #92400e; color: #78350f;
+    padding: 2px 8px; border-radius: 4px; font-size: 11px; cursor: pointer;
+  }
+  .cost-line {
+    text-align: right; font-size: 11px; color: var(--muted); margin-top: 6px;
+    font-variant-numeric: tabular-nums;
+  }
+  .small-link { background: none; border: none; color: var(--muted); text-decoration: underline; font-size: 12px; cursor: pointer; padding: 0; }
 </style>
 </head>
 <body>
@@ -168,15 +200,19 @@
   <label for="apiKey">Anthropic API key</label>
   <input type="password" id="apiKey" placeholder="sk-ant-...">
   <div class="key-warn">Stored only in this browser (localStorage). Never leaves your device except to call api.anthropic.com directly. Get one at console.anthropic.com.</div>
-  <label for="modelId">Model</label>
-  <input type="text" id="modelId" value="claude-sonnet-4-5-20250929">
-  <div class="help">Sonnet is the current vision sweet spot. Change to claude-opus-4-6 for tougher calls (slower, costlier).</div>
-  <button class="go" id="saveKey" style="background: #444;">Save settings</button>
+
+  <label>Cache</label>
+  <div class="help" id="cacheStats">–</div>
+  <button class="small-link" id="clearCache">Clear cached verdicts</button>
+  <br>
+  <button class="small-link" id="resetKey">Forget API key</button>
+
+  <button class="go" id="saveKey" style="background: #444; margin-top: 16px;">Save settings</button>
 </div>
 
 <div class="panel">
-  <label>Photos (1–5)</label>
-  <div class="help">Front, back, brand label, any flaws. More photos = better verdict.</div>
+  <label>Photos (1–3 — front, back, brand label)</label>
+  <div class="help">Photos auto-compressed to 1024px before upload. More photos help accuracy but cost slightly more.</div>
   <div class="photo-grid" id="photoGrid"></div>
   <label class="add-photo" id="addPhotoLabel">
     <input type="file" id="photoInput" accept="image/*" capture="environment" multiple>
@@ -190,7 +226,18 @@
   </div>
 
   <label for="notes">Optional notes</label>
-  <textarea id="notes" placeholder="e.g. small mark on cuff · reduced from £6 · mens M but vintage cut so fits S·"></textarea>
+  <textarea id="notes" placeholder="e.g. small mark on cuff · reduced from £6 · mens M but vintage cut"></textarea>
+
+  <div class="mode-toggle">
+    <button data-mode="cheap" class="active" id="modeCheap">
+      Cheap
+      <span class="price-tag">Haiku · ~0.4p</span>
+    </button>
+    <button data-mode="best" id="modeBest">
+      Best
+      <span class="price-tag">Sonnet · ~3p</span>
+    </button>
+  </div>
 
   <button class="go" id="analyseBtn">Analyse</button>
 </div>
@@ -198,14 +245,14 @@
 <div id="result"></div>
 
 <div class="footer-note">
-  v0 · 4 May 2026 · Uses your 444 lifetime sales as primary baseline · Top-viewed sold items as uniqueness exemplars
+  v0.2 · Refreshed weekly Tue 10:00 · <span id="dataAsOf"></span>
 </div>
 
 </div>
 
 <script>
 // ============================================================================
-// JOSE'S VINTED DATASET — baked in for offline matching
+// JOSE'S VINTED DATASET — refreshed weekly by scheduled task
 // ============================================================================
 const DATA = {
   totalLifetimeSales: 444,
@@ -214,7 +261,6 @@ const DATA = {
   medianSoldPrice: 24.50,
   startDate: "2025-09-21",
   asOfDate: "2026-05-04",
-  // Brand-level performance (last ~60 days visible)
   brandStats: [
     {brand:"Carhartt", sold:17, avgSold:35.91, active:12, avgActive:42.38, sellThru:59, avgFavs:4.6},
     {brand:"Lacoste", sold:7, avgSold:23.50, active:4, avgActive:23.25, sellThru:64, avgFavs:2.5},
@@ -224,7 +270,7 @@ const DATA = {
     {brand:"adidas", sold:21, avgSold:25.60, active:37, avgActive:22.74, sellThru:36, avgFavs:1.6},
     {brand:"Nike", sold:15, avgSold:24.40, active:42, avgActive:23.42, sellThru:26, avgFavs:1.5},
     {brand:"Vintage Dressing", sold:46, avgSold:25.77, active:103, avgActive:24.75, sellThru:31, avgFavs:1.5,
-     note: "CATCH-ALL label for vintage / unbranded items. Each piece is one-of-one — DO NOT use this average as a baseline. Match on item type + uniqueness instead."},
+     note: "CATCH-ALL label for vintage / unbranded items. Each piece is one-of-one — pricing uses uniqueness ladder, not this average."},
     {brand:"Disney", sold:13, avgSold:22.92, active:34, avgActive:20.97, sellThru:28, avgFavs:2.6},
     {brand:"Tommy Hilfiger", sold:5, avgSold:21.30, active:13, avgActive:14.92, sellThru:28, avgFavs:1.2},
     {brand:"Romwe", sold:2, avgSold:33.50, active:3, avgActive:29.83, sellThru:40, avgFavs:6.3},
@@ -242,25 +288,23 @@ const DATA = {
     {brand:"Columbia", sold:2, avgSold:47.25, active:4, avgActive:31.00, sellThru:33, avgFavs:0.8},
     {brand:"Levi's", sold:0, avgSold:null, active:4, avgActive:30.25, sellThru:0, avgFavs:0.3}
   ],
-  // The 15 highest-viewed sold items — uniqueness gold standard
   topViewedSold: [
-    {title:"Vintage Nike Grey Puffer Jacket Men's L – 80/20 Down, Hooded, Retro", brand:"Nike", price:40, views:520, condition:"Very good"},
-    {title:"Vintage Best Company Denim Jacket Blanket Lined Workwear Chore Coat M", brand:"Vintage Dressing", price:54.50, views:323, condition:"Very good"},
-    {title:"Adidas Originals Red Puffer Jacket Trefoil 3-Stripes Retro Coat M", brand:"adidas", price:20, views:254, condition:"Very good"},
-    {title:"Lacoste Vintage Made in France Sweatshirt Yellow Green Trim 80s 90s", brand:"Lacoste", price:14, views:170, condition:"Good"},
-    {title:"Marlboro Classics Brown Workwear Jacket – Men's XL", brand:"Marlboro Classics", price:80, views:161, condition:"Very good"},
-    {title:"Vintage Military-Style Patch Jacket – Oversized Fit (Men's L)", brand:"Vintage Dressing", price:24.50, views:159, condition:"Good"},
-    {title:"Men's Blue Denim Jeans – Size 32 – BNWT", brand:"Denim", price:32.50, views:152, condition:"New with tags"},
-    {title:"Aran Sweater Market Irish Wool Jumper L – Green Cable Knit Made in Ireland", brand:"Vintage Dressing", price:32.50, views:149, condition:"Very good"},
-    {title:"Vintage Kelme Track Jacket Black & Cream – Men's XL 90s Football", brand:"Vintage Dressing", price:14.50, views:136, condition:"Very good"},
-    {title:"Vintage DeLong NHL San Jose Sharks Varsity Jacket Size 48 – Wool & Leather", brand:"NHL", price:84.50, views:133, condition:"Good"},
-    {title:"Vintage Great Britain Rugby League Lions Jumper 13 Ellis Rugby Small", brand:"sportswear", price:37.50, views:126, condition:"Very good"},
-    {title:"The North Face Women's DryVent Waterproof Jacket – XS – Beige / Taupe", brand:"The North Face", price:34.50, views:117, condition:"Good"},
-    {title:"Teenage Mutant Ninja Turtles TMNT Hoodie Green BNWT Men's L Nickelodeon", brand:"Romwe", price:29.50, views:115, condition:"New with tags"},
-    {title:"Vintage 90s Moda Sportive Women's Puffer Jacket Size S–M BNWT", brand:"Vintage Dressing", price:22.50, views:111, condition:"New with tags"},
-    {title:"Barbour Border Wax Jacket Olive C44 / XL – Made in England", brand:"Barbour", price:44.50, views:105, condition:"Satisfactory"}
+    {title:"Vintage Nike Grey Puffer Jacket Men's L – 80/20 Down, Hooded, Retro", brand:"Nike", price:40, views:520, condition:"Very good", category:"coats_outerwear"},
+    {title:"Vintage Best Company Denim Jacket Blanket Lined Workwear Chore Coat M", brand:"Vintage Dressing", price:54.50, views:323, condition:"Very good", category:"coats_outerwear"},
+    {title:"Adidas Originals Red Puffer Jacket Trefoil 3-Stripes Retro Coat M", brand:"adidas", price:20, views:254, condition:"Very good", category:"coats_outerwear"},
+    {title:"Lacoste Vintage Made in France Sweatshirt Yellow Green Trim 80s 90s", brand:"Lacoste", price:14, views:170, condition:"Good", category:"sweatshirts_hoodies"},
+    {title:"Marlboro Classics Brown Workwear Jacket – Men's XL", brand:"Marlboro Classics", price:80, views:161, condition:"Very good", category:"coats_outerwear"},
+    {title:"Vintage Military-Style Patch Jacket – Oversized Fit (Men's L)", brand:"Vintage Dressing", price:24.50, views:159, condition:"Good", category:"coats_outerwear"},
+    {title:"Men's Blue Denim Jeans – Size 32 – BNWT", brand:"Denim", price:32.50, views:152, condition:"New with tags", category:"trousers_jeans"},
+    {title:"Aran Sweater Market Irish Wool Jumper L – Green Cable Knit Made in Ireland", brand:"Vintage Dressing", price:32.50, views:149, condition:"Very good", category:"knitwear_jumpers"},
+    {title:"Vintage Kelme Track Jacket Black & Cream – Men's XL 90s Football", brand:"Vintage Dressing", price:14.50, views:136, condition:"Very good", category:"sportswear"},
+    {title:"Vintage DeLong NHL San Jose Sharks Varsity Jacket Size 48 – Wool & Leather", brand:"NHL", price:84.50, views:133, condition:"Good", category:"coats_outerwear"},
+    {title:"Vintage Great Britain Rugby League Lions Jumper 13 Ellis Rugby Small", brand:"sportswear", price:37.50, views:126, condition:"Very good", category:"knitwear_jumpers"},
+    {title:"The North Face Women's DryVent Waterproof Jacket – XS – Beige / Taupe", brand:"The North Face", price:34.50, views:117, condition:"Good", category:"coats_outerwear"},
+    {title:"Teenage Mutant Ninja Turtles TMNT Hoodie Green BNWT Men's L Nickelodeon", brand:"Romwe", price:29.50, views:115, condition:"New with tags", category:"sweatshirts_hoodies"},
+    {title:"Vintage 90s Moda Sportive Women's Puffer Jacket Size S–M BNWT", brand:"Vintage Dressing", price:22.50, views:111, condition:"New with tags", category:"coats_outerwear"},
+    {title:"Barbour Border Wax Jacket Olive C44 / XL – Made in England", brand:"Barbour", price:44.50, views:105, condition:"Satisfactory", category:"coats_outerwear"}
   ],
-  // Seasonality lookup: month_index (0=Jan) → category multipliers
   seasonality: {
     coats_outerwear:    [1.10, 0.95, 0.85, 0.75, 0.70, 0.70, 0.70, 0.80, 1.05, 1.30, 1.30, 1.25],
     knitwear_jumpers:   [1.10, 1.05, 0.95, 0.85, 0.75, 0.70, 0.70, 0.80, 1.00, 1.20, 1.25, 1.25],
@@ -273,126 +317,319 @@ const DATA = {
     sportswear:         [1.05, 1.05, 1.05, 1.00, 1.00, 1.00, 1.00, 1.00, 1.05, 1.05, 1.05, 1.05],
     other:              [1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00]
   },
-  // Monthly sales pattern (Sep25 → May26)
   monthlySales: [
     ["2025-09",13],["2025-10",83],["2025-11",47],["2025-12",84],
     ["2026-01",71],["2026-02",45],["2026-03",48],["2026-04",47],["2026-05",6]
-  ],
-  vintedFeeNote: "Buyers pay Buyer Protection Fee. You receive ~95% of listing price after Vinted's small payment-processing fee. Use 0.95 multiplier on list price for net proceeds."
+  ]
 };
 
+document.getElementById('dataAsOf').textContent = `data as of ${DATA.asOfDate}`;
+
 // ============================================================================
-// PROMPT BUILDER
+// VISION PROMPT — small, attributes only
 // ============================================================================
-function buildSystemPrompt() {
-  const monthIdx = new Date().getMonth();
-  const monthName = ["January","February","March","April","May","June","July","August","September","October","November","December"][monthIdx];
-  return `You are Vinted Verdict, an in-shop buying assistant for Jose Oliveira (@throwbackthreadsclub on Vinted UK).
+function buildVisionPrompt() {
+  const exemplars = DATA.topViewedSold.slice(0, 12).map((i,n) =>
+    `${n+1}. "${i.title}" — sold £${i.price} — ${i.views} views`).join('\n');
+  return `You are an attribute extractor for a Vinted UK reseller's in-shop buying assistant. The seller (Throwback Threads Club) sells second-hand clothes — heavy on workwear, sportswear, vintage outerwear, novelty knits, and Disney/character pieces.
 
-Jose buys clothes from UK charity shops and Whatnot to resell on Vinted UK. He needs an instant verdict on whether to buy an item, with full reasoning so he can sanity-check your call.
+Examine the photo(s) of an item and return STRICT JSON with the attributes below. Do not price the item or make a buy/pass call — that happens elsewhere. Just observe and report.
 
-# Today's date
-${new Date().toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'long', year:'numeric'})} (month ${monthName} = index ${monthIdx})
+# Exemplars of "highly unique" items (uniqueness 4-5)
+These are the seller's top-viewed sold items. Common patterns: era-specific (80s/90s/Y2K), country/region/team specific, heritage workwear/outdoor, iconic silhouettes, embroidered character/spell-out logos.
+${exemplars}
 
-# Jose's seller stats
-- 444 lifetime sales since 21 Sep 2025 (~7.5 months, ~49/month)
-- 4.96★ avg rating (only 4 sub-5 reviews ever)
-- Avg sale £27.32, median £24.50
-- Listed inventory currently: 421 items, value £10,767 — he is OVER-STOCKED, so the bar for buying must be high
-- Listing restriction lifts 06/05/2026
+# Uniqueness scale
+- 1: very generic (plain modern tee, basic high-street piece)
+- 2: common (mainstream brand basic, no era cue)
+- 3: typical for category (recognisable brand, average distinctiveness)
+- 4: notably unique (specific era, region, team, embroidery, unusual silhouette)
+- 5: exemplar-tier rare (matches the patterns above — heritage workwear, niche European/Japanese brand, specific team/event piece, unusual collab)
 
-# Jose's brand performance (recent ~60 days, ${DATA.brandStats.length} brands tracked)
-${DATA.brandStats.map(b => {
-  const note = b.note ? ` — ${b.note}` : '';
-  return `- ${b.brand}: ${b.sold} sold @ avg £${b.avgSold || '–'}, ${b.active} active @ avg £${b.avgActive || '–'}, sell-through ${b.sellThru}%, avg favs on active ${b.avgFavs ?? '–'}${note}`;
-}).join('\n')}
+# Vintage Dressing rule
+If you can't identify a brand (label not visible, washed off, or unbranded), set guessed_brand to "Vintage Dressing" — that's the seller's catch-all. Don't guess at brands you can't see.
 
-# Critical interpretation rules
-1. "Vintage Dressing" is Jose's CATCH-ALL label for any vintage / unbranded item. The £25.77 average is meaningless because every item is one-of-one. NEVER use this brand average. Instead, match on item type + uniqueness, drawing on the top-viewed exemplars below.
-2. Sell-through % = sold / (sold + active). Above 40% = strong demand. Below 25% = he's already over-stocked, push the verdict downward.
-3. Avg favs on active items: 3+ = market wants this brand right now. 0–1 = market has stopped engaging.
+# Item category — pick ONE from this list
+coats_outerwear | knitwear_jumpers | sweatshirts_hoodies | tshirts_shirts | shorts_swim | dresses_skirts | trousers_jeans | accessories_bags | sportswear | other
 
-# Top-viewed sold items (use these as gold-standard exemplars for what counts as "unique" to Jose's buyers)
-${DATA.topViewedSold.map((i,n) => `${n+1}. "${i.title}" — ${i.brand} — sold £${i.price} — ${i.views} views — condition: ${i.condition}`).join('\n')}
-
-These items pulled extreme attention. Common patterns: era-specific cues (80s/90s/Y2K, "vintage", "retro"), country/region/team specificity (Marlboro Classics USA workwear, NHL San Jose Sharks varsity, Great Britain Rugby Lions, Aran Ireland, Kelme Spain), heritage outdoor/workwear (Carhartt, Barbour, Marlboro, Helly Hansen, Berghaus), iconic silhouettes (puffers, varsity jackets, chore coats, denim Western jackets, wax jackets), spell-out logos, embroidered character pieces (Disney, TMNT).
-
-# Seasonality (today: ${monthName})
-- Coats/outerwear: ${DATA.seasonality.coats_outerwear[monthIdx]}× (peak Oct–Jan, trough May–Aug)
-- Knitwear/jumpers: ${DATA.seasonality.knitwear_jumpers[monthIdx]}×
-- Sweatshirts/hoodies: ${DATA.seasonality.sweatshirts_hoodies[monthIdx]}×
-- T-shirts/shirts: ${DATA.seasonality.tshirts_shirts[monthIdx]}×
-- Shorts/swim: ${DATA.seasonality.shorts_swim[monthIdx]}×
-- Dresses/skirts: ${DATA.seasonality.dresses_skirts[monthIdx]}×
-- Trousers/jeans: ${DATA.seasonality.trousers_jeans[monthIdx]}×
-- Accessories/bags: ${DATA.seasonality.accessories_bags[monthIdx]}×
-- Sportswear: ${DATA.seasonality.sportswear[monthIdx]}×
-
-# Costs to factor into profit
-- Vinted: buyer pays Buyer Protection Fee, Jose receives ~95% of listing price (small payment-processing deduction)
-- Packaging + label printing: ~£0.40 per item
-- Jose's time per listing: implicitly covered by the £15+ profit threshold for Definite Buy
-
-# Decision tiers
-- T1 DEFINITE BUY: expected net profit ≥ £20 AND high confidence (own data match exists OR top-viewed exemplar pattern present)
-- T2 STRONG BUY: expected net profit £12–20 AND medium-to-high confidence
-- T3 BORDERLINE: expected profit £5–12, OR higher profit but low confidence, OR seasonality is hurting
-- T4 PASS: expected profit £0–5, OR sell-through too low for this category, OR Jose is over-stocked in this brand
-- T5 DEFINITE PASS: loss-making at this asking price, OR red flags (potential fake, severe damage, dead category)
-
-When confidence is low or the item is genuinely outside Jose's data, say so explicitly and lean to a more conservative tier.
-
-# Output format — strict JSON, no prose outside the JSON
-Return EXACTLY this JSON shape (no markdown fences, no preamble):
-
+# Return EXACTLY this JSON (no markdown fences, no preamble)
 {
-  "tier": 1 | 2 | 3 | 4 | 5,
-  "tier_label": "Definite buy" | "Strong buy" | "Borderline" | "Pass" | "Definite pass",
-  "headline": "<one sentence summary of the call>",
-  "extracted": {
-    "guessed_brand": "<brand name or 'Unknown / Vintage'>",
-    "item_type": "<e.g. men's hoodie, women's dress, kids jumper>",
-    "gender": "men's | women's | kids | unisex",
-    "size_visible": "<size or 'not visible'>",
-    "condition": "New with tags | New without tags | Very good | Good | Satisfactory",
-    "colour_pattern": "<short description>",
-    "era_cues": "<e.g. 90s, Y2K, modern, none detected>",
-    "uniqueness_score": 1 | 2 | 3 | 4 | 5,
-    "uniqueness_rationale": "<why this score>",
-    "red_flags": ["<list of any concerns>"]
-  },
-  "pricing": {
-    "predicted_list_price_low": <number>,
-    "predicted_list_price_high": <number>,
-    "predicted_list_price_recommended": <number>,
-    "predicted_actual_sale_low": <number>,
-    "predicted_actual_sale_high": <number>,
-    "expected_net_proceeds": <number>,
-    "asking_price": <number>,
-    "packaging_cost": 0.40,
-    "expected_net_profit": <number>
-  },
-  "adjustments": {
-    "seasonality_multiplier": <number>,
-    "uniqueness_multiplier": <number>,
-    "stock_glut_penalty": <number>,
-    "applied_notes": "<one line>"
-  },
-  "comparables_used": [
-    {"source": "own_sales | own_active | top_viewed_exemplar | wider_vinted_general | unknown_inferred", "summary": "<short>"}
-  ],
-  "reasoning_steps": [
-    "<step 1, plain English>",
-    "<step 2>",
-    "<step 3>",
-    "<step 4>",
-    "<step 5>"
-  ],
-  "confidence": "high | medium | low",
-  "buy_advice": "<one short paragraph: what Jose should do and why, including expected sell-through speed>"
+  "guessed_brand": "<brand visible on label, or 'Vintage Dressing' if unbranded/illegible>",
+  "brand_confidence": "high" | "medium" | "low",
+  "item_type": "<short e.g. 'mens hoodie', 'womens dress', 'kids jumper'>",
+  "item_category": "<one of the categories above>",
+  "gender": "men's" | "women's" | "kids" | "unisex",
+  "size_visible": "<size label or 'not visible'>",
+  "condition": "New with tags" | "New without tags" | "Very good" | "Good" | "Satisfactory",
+  "colour_pattern": "<short description>",
+  "era_cues": "<e.g. '90s', 'Y2K', 'modern', 'none detected'>",
+  "uniqueness_score": 1 | 2 | 3 | 4 | 5,
+  "uniqueness_rationale": "<one sentence why this score>",
+  "distinctive_features": ["<feature 1>", "<feature 2>", "..."],
+  "red_flags": ["<list any concerns: visible stain, frayed, possible fake, hole, pilling, dated style with low demand, unfamiliar brand, etc.>"]
+}`;
 }
 
-Be concrete. Show the maths in reasoning_steps. If you can't confidently identify the brand from the photos, say so and base the call on item-type + uniqueness + general Vinted UK market knowledge (with low confidence flagged).`;
+// ============================================================================
+// PURE-JS PRICING ENGINE — no LLM cost
+// ============================================================================
+function round2(n) { return Math.round(n * 100) / 100; }
+function monthName(i) {
+  return ["January","February","March","April","May","June","July","August","September","October","November","December"][i];
+}
+
+function computeVerdict(attrs, askingPrice) {
+  // 1. Brand lookup
+  const brand = (attrs.guessed_brand || '').trim();
+  const isVintageOrUnknown = brand === 'Vintage Dressing' || !brand || /unknown/i.test(brand);
+  const brandStats = isVintageOrUnknown ? null
+    : DATA.brandStats.find(b => b.brand.toLowerCase() === brand.toLowerCase());
+
+  // 2. Base price
+  let basePrice, baseSource;
+  if (brandStats && brandStats.avgSold) {
+    basePrice = brandStats.avgSold;
+    baseSource = `your ${brandStats.brand} avg sold price (${brandStats.sold} sales @ £${brandStats.avgSold})`;
+  } else if (isVintageOrUnknown) {
+    const ladder = {1: 8, 2: 14, 3: 22, 4: 35, 5: 55};
+    basePrice = ladder[attrs.uniqueness_score] || 22;
+    baseSource = `vintage/unbranded uniqueness ladder (score ${attrs.uniqueness_score}/5 → £${basePrice})`;
+  } else {
+    basePrice = DATA.medianSoldPrice;
+    baseSource = `your portfolio median £${DATA.medianSoldPrice} (no own data on ${brand})`;
+  }
+
+  // 3. Condition multiplier
+  const conditionMul = ({
+    'New with tags': 1.30,
+    'New without tags': 1.15,
+    'Very good': 1.00,
+    'Good': 0.85,
+    'Satisfactory': 0.65
+  })[attrs.condition] || 1.00;
+
+  // 4. Seasonality
+  const monthIdx = new Date().getMonth();
+  const cat = attrs.item_category || 'other';
+  const seasonalityMul = (DATA.seasonality[cat] || DATA.seasonality.other)[monthIdx];
+
+  // 5. Uniqueness multiplier
+  const uniquenessMul = ({1: 0.85, 2: 0.95, 3: 1.00, 4: 1.20, 5: 1.40})[attrs.uniqueness_score] || 1.00;
+
+  // 6. Stock-glut penalty
+  let glutPenalty = 1.00;
+  let glutNote = '';
+  if (brandStats && brandStats.sellThru < 30 && brandStats.active > brandStats.sold * 2) {
+    glutPenalty = 0.85;
+    glutNote = ` (over-stocked: ${brandStats.active} active vs ${brandStats.sold} sold)`;
+  }
+
+  // 7. Red flag analysis
+  const flags = (attrs.red_flags || []).filter(Boolean);
+  const severeRe = /fake|counterfeit|severe|major|hole|tear|broken|fault|destroyed|ruined/i;
+  const moderateRe = /stain|stained|fray|frayed|mark|pilling|fade|faded|worn|dated|out of style|low demand|unfamiliar/i;
+  const severeFlag = flags.find(f => severeRe.test(f));
+  const moderateFlag = flags.find(f => moderateRe.test(f));
+
+  // 8. Predicted list price
+  const listMid = basePrice * conditionMul * seasonalityMul * uniquenessMul * glutPenalty;
+  const listLow = listMid * 0.85;
+  const listHigh = listMid * 1.15;
+  // Round to nearest 50p ending in .50 or .00, his typical pattern
+  const listRecommended = Math.max(5, Math.round(listMid * 2) / 2);
+
+  // 9. Predicted actual sale (Vinted buyers often offer down)
+  const offerHaircut = isVintageOrUnknown || (brandStats && brandStats.sellThru < 30) ? 0.88 : 0.92;
+  const saleLow = listLow * 0.85;
+  const saleHigh = listHigh * 0.98;
+  const saleMid = listMid * offerHaircut;
+
+  // 10. Net proceeds + profit
+  const vintedFeeMul = 0.95;
+  const packaging = 0.40;
+  const netProceeds = saleMid * vintedFeeMul;
+  const netProfit = netProceeds - askingPrice - packaging;
+
+  // 11. Confidence
+  let confidence = 'medium';
+  if (brandStats && attrs.brand_confidence === 'high' && !severeFlag && !moderateFlag) confidence = 'high';
+  else if (!brandStats && (attrs.brand_confidence === 'low' || isVintageOrUnknown)) confidence = 'low';
+  if (severeFlag) confidence = 'low';
+  if (brandStats && attrs.brand_confidence === 'medium') confidence = 'medium';
+
+  // 12. Tier
+  let tier, tierLabel, headline;
+  if (severeFlag) {
+    tier = 5; tierLabel = 'Definite pass';
+    headline = `Skip — red flag: ${severeFlag.toLowerCase()}.`;
+  } else if (netProfit < 0) {
+    tier = 5; tierLabel = 'Definite pass';
+    headline = `Loss-making at £${askingPrice.toFixed(2)} — would lose £${Math.abs(netProfit).toFixed(2)}.`;
+  } else if (netProfit < 5) {
+    tier = 4; tierLabel = 'Pass';
+    headline = `Margin too thin — only £${netProfit.toFixed(2)} expected profit.`;
+  } else if (netProfit < 12 || (netProfit < 20 && confidence === 'low')) {
+    tier = 3; tierLabel = 'Borderline';
+    headline = `${confidence === 'low' ? 'Low confidence — ' : ''}~£${netProfit.toFixed(2)} expected, your call.`;
+  } else if (netProfit < 20 || confidence === 'medium') {
+    tier = 2; tierLabel = 'Strong buy';
+    headline = `Solid pickup — £${netProfit.toFixed(2)} expected profit.`;
+  } else {
+    tier = 1; tierLabel = 'Definite buy';
+    headline = `Buy with confidence — £${netProfit.toFixed(2)} expected profit.`;
+  }
+
+  // 13. Reasoning steps
+  const steps = [
+    `Identified as ${brand || 'Unknown'} ${attrs.item_type || 'item'} (${attrs.condition}, uniqueness ${attrs.uniqueness_score}/5)`,
+    `Base price: £${basePrice.toFixed(2)} — ${baseSource}`,
+    `Multipliers: condition ×${conditionMul.toFixed(2)} (${attrs.condition}) · seasonality ×${seasonalityMul.toFixed(2)} (${cat} in ${monthName(monthIdx)}) · uniqueness ×${uniquenessMul.toFixed(2)}${glutPenalty < 1 ? ` · stock-glut ×${glutPenalty.toFixed(2)}${glutNote}` : ''}`,
+    `Predicted list price: £${listMid.toFixed(2)} (range £${listLow.toFixed(2)}–£${listHigh.toFixed(2)}, recommended £${listRecommended.toFixed(2)})`,
+    `Expected actual sale £${saleMid.toFixed(2)} → net £${netProceeds.toFixed(2)} (after Vinted's 5% payment fee) − £${askingPrice.toFixed(2)} ask − £${packaging.toFixed(2)} packaging = £${netProfit.toFixed(2)} profit`
+  ];
+  if (severeFlag) steps.push(`⚠️ Severe red flag overrides the maths: ${severeFlag}`);
+  else if (moderateFlag) steps.push(`Moderate concern noted: ${moderateFlag}`);
+
+  // 14. Comparables
+  const comparables = [];
+  if (brandStats) {
+    comparables.push({source: 'own_sales', summary: `${brandStats.sold} ${brandStats.brand} sold @ avg £${brandStats.avgSold} · sell-through ${brandStats.sellThru}% · avg favs on listed ${brandStats.avgFavs ?? '–'}`});
+  }
+  if (attrs.uniqueness_score >= 4) {
+    const cat = attrs.item_category;
+    const exemplars = DATA.topViewedSold.filter(e => e.category === cat || (brand && e.brand.toLowerCase() === brand.toLowerCase())).slice(0, 2);
+    exemplars.forEach(e => {
+      comparables.push({source: 'top_viewed_exemplar', summary: `Similar high-uniqueness sale: "${e.title.slice(0,60)}" sold £${e.price} (${e.views} views)`});
+    });
+  }
+  if (!brandStats && isVintageOrUnknown) {
+    comparables.push({source: 'unknown_inferred', summary: `No brand match — using uniqueness ladder calibrated on your top-viewed vintage exemplars`});
+  }
+
+  // 15. Buy advice
+  const advice = generateBuyAdvice(tier, brand, attrs, brandStats, netProfit, listRecommended);
+
+  return {
+    tier, tier_label: tierLabel, headline,
+    extracted: {
+      guessed_brand: brand,
+      item_type: attrs.item_type || '–',
+      gender: attrs.gender || '–',
+      size_visible: attrs.size_visible || '–',
+      condition: attrs.condition || '–',
+      colour_pattern: attrs.colour_pattern || '–',
+      era_cues: attrs.era_cues || '–',
+      uniqueness_score: attrs.uniqueness_score || '–',
+      uniqueness_rationale: attrs.uniqueness_rationale || '–',
+      red_flags: flags
+    },
+    pricing: {
+      predicted_list_price_low: round2(listLow),
+      predicted_list_price_high: round2(listHigh),
+      predicted_list_price_recommended: round2(listRecommended),
+      predicted_actual_sale_low: round2(saleLow),
+      predicted_actual_sale_high: round2(saleHigh),
+      expected_net_proceeds: round2(netProceeds),
+      asking_price: round2(askingPrice),
+      packaging_cost: packaging,
+      expected_net_profit: round2(netProfit)
+    },
+    adjustments: {
+      seasonality_multiplier: round2(seasonalityMul),
+      uniqueness_multiplier: round2(uniquenessMul),
+      stock_glut_penalty: round2(glutPenalty),
+      condition_multiplier: round2(conditionMul),
+      applied_notes: `${cat} category · ${monthName(monthIdx)} · condition ${attrs.condition}${glutNote}`
+    },
+    comparables_used: comparables,
+    reasoning_steps: steps,
+    confidence,
+    buy_advice: advice
+  };
+}
+
+function generateBuyAdvice(tier, brand, attrs, brandStats, profit, recommendedPrice) {
+  const sellSpeedNote = brandStats
+    ? brandStats.sellThru >= 50 ? `${brandStats.brand} sells fast (${brandStats.sellThru}% sell-through), so your capital won't sit long.`
+    : brandStats.sellThru >= 30 ? `${brandStats.brand} sells at moderate pace (${brandStats.sellThru}% sell-through).`
+    : `${brandStats.brand} is currently slow-moving (${brandStats.sellThru}% sell-through) — be ready to wait or drop the price.`
+    : `Vintage/unbranded uniqueness items take 30-90 days typically; price for patience.`;
+
+  switch(tier) {
+    case 1: return `Strong margin and confident on the call. List around £${recommendedPrice.toFixed(2)}. ${sellSpeedNote}`;
+    case 2: return `Worth picking up. List around £${recommendedPrice.toFixed(2)}. ${sellSpeedNote}`;
+    case 3: return `Borderline — only buy if you've got space and patience. If picking up, list at £${recommendedPrice.toFixed(2)} and reduce after 30 days if no engagement. ${sellSpeedNote}`;
+    case 4: return `Margin too thin for your time — pass unless you can negotiate the asking price down or you really love the piece.`;
+    case 5: return `Skip. Either a loss or a serious red flag. Don't tie up capital here.`;
+  }
+}
+
+// ============================================================================
+// IMAGE COMPRESSION
+// ============================================================================
+async function compressImage(file, maxDim = 1024, quality = 0.85) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onload = e => { img.src = e.target.result; };
+    reader.onerror = reject;
+    img.onload = () => {
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      const dataUrl = canvas.toDataURL('image/jpeg', quality);
+      resolve({dataUrl, mediaType: 'image/jpeg', width: w, height: h, originalSize: file.size});
+    };
+    img.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+// ============================================================================
+// CACHE — keyed by photo hash + ask + notes + mode + data version
+// ============================================================================
+async function sha256Hex(str) {
+  const buf = new TextEncoder().encode(str);
+  const hash = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+function cacheGet(key) {
+  try {
+    const all = JSON.parse(localStorage.getItem('vv_cache') || '{}');
+    const entry = all[key];
+    if (!entry) return null;
+    if (Date.now() - entry.timestamp > CACHE_TTL_MS) {
+      delete all[key]; localStorage.setItem('vv_cache', JSON.stringify(all));
+      return null;
+    }
+    return entry;
+  } catch (e) { return null; }
+}
+function cacheSet(key, verdict, mode) {
+  try {
+    const all = JSON.parse(localStorage.getItem('vv_cache') || '{}');
+    all[key] = {verdict, mode, timestamp: Date.now()};
+    // Cap at 200 entries (LRU prune)
+    const keys = Object.keys(all).sort((a,b) => all[a].timestamp - all[b].timestamp);
+    while (keys.length > 200) { delete all[keys.shift()]; }
+    localStorage.setItem('vv_cache', JSON.stringify(all));
+  } catch (e) {}
+}
+function cacheStats() {
+  try {
+    const all = JSON.parse(localStorage.getItem('vv_cache') || '{}');
+    const count = Object.keys(all).length;
+    const size = (JSON.stringify(all).length / 1024).toFixed(1);
+    return `${count} verdicts cached (${size} KB)`;
+  } catch (e) { return '–'; }
+}
+function cacheClear() {
+  localStorage.removeItem('vv_cache');
 }
 
 // ============================================================================
@@ -400,20 +637,19 @@ Be concrete. Show the maths in reasoning_steps. If you can't confidently identif
 // ============================================================================
 const photoGrid = document.getElementById('photoGrid');
 const photoInput = document.getElementById('photoInput');
-const photos = []; // {dataUrl, mediaType}
+const photos = [];
 
-photoInput.addEventListener('change', (e) => {
+photoInput.addEventListener('change', async (e) => {
   for (const file of e.target.files) {
-    if (photos.length >= 5) break;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const dataUrl = ev.target.result;
-      photos.push({dataUrl, mediaType: file.type});
+    if (photos.length >= 3) break;
+    try {
+      const compressed = await compressImage(file);
+      photos.push(compressed);
       renderPhotos();
-    };
-    reader.readAsDataURL(file);
+    } catch (err) {
+      console.error(err);
+    }
   }
-  // Reset input so same file can be re-added
   photoInput.value = '';
 });
 
@@ -439,20 +675,54 @@ function renderPhotos() {
 const gearBtn = document.getElementById('gearBtn');
 const settingsPanel = document.getElementById('settingsPanel');
 const apiKeyInput = document.getElementById('apiKey');
-const modelIdInput = document.getElementById('modelId');
 const saveKeyBtn = document.getElementById('saveKey');
+const clearCacheBtn = document.getElementById('clearCache');
+const resetKeyBtn = document.getElementById('resetKey');
+const cacheStatsEl = document.getElementById('cacheStats');
 
-gearBtn.onclick = () => settingsPanel.classList.toggle('collapsed');
+function refreshCacheStats() { cacheStatsEl.textContent = cacheStats(); }
 
-// Load saved key
+gearBtn.onclick = () => {
+  settingsPanel.classList.toggle('collapsed');
+  refreshCacheStats();
+};
 apiKeyInput.value = localStorage.getItem('vv_api_key') || '';
-modelIdInput.value = localStorage.getItem('vv_model') || 'claude-sonnet-4-5-20250929';
-
 saveKeyBtn.onclick = () => {
   localStorage.setItem('vv_api_key', apiKeyInput.value.trim());
-  localStorage.setItem('vv_model', modelIdInput.value.trim());
   settingsPanel.classList.add('collapsed');
-  alert('Saved.');
+};
+clearCacheBtn.onclick = () => {
+  if (confirm('Clear all cached verdicts? Repeat scans will re-call the API.')) {
+    cacheClear(); refreshCacheStats();
+  }
+};
+resetKeyBtn.onclick = () => {
+  if (confirm('Forget the saved API key?')) {
+    localStorage.removeItem('vv_api_key');
+    apiKeyInput.value = '';
+  }
+};
+
+// ============================================================================
+// MODE TOGGLE (Cheap / Best)
+// ============================================================================
+const modeButtons = document.querySelectorAll('.mode-toggle button');
+let currentMode = localStorage.getItem('vv_mode') || 'cheap';
+function applyMode() {
+  modeButtons.forEach(b => b.classList.toggle('active', b.dataset.mode === currentMode));
+}
+modeButtons.forEach(b => {
+  b.onclick = () => {
+    currentMode = b.dataset.mode;
+    localStorage.setItem('vv_mode', currentMode);
+    applyMode();
+  };
+});
+applyMode();
+
+const MODELS = {
+  cheap: 'claude-haiku-4-5-20251001',
+  best:  'claude-sonnet-4-5-20250929'
 };
 
 // ============================================================================
@@ -465,7 +735,6 @@ const notesInput = document.getElementById('notes');
 
 analyseBtn.onclick = async () => {
   const apiKey = (localStorage.getItem('vv_api_key') || '').trim();
-  const model = (localStorage.getItem('vv_model') || 'claude-sonnet-4-5-20250929').trim();
   const askPrice = parseFloat(askPriceInput.value);
   const notes = notesInput.value.trim();
 
@@ -484,8 +753,17 @@ analyseBtn.onclick = async () => {
     return;
   }
 
+  // Cache check
+  const photoHashes = photos.map(p => p.dataUrl.length + ':' + p.dataUrl.slice(0, 200) + p.dataUrl.slice(-200)).join('|');
+  const cacheKey = await sha256Hex(`${DATA.asOfDate}|${currentMode}|${photoHashes}|${askPrice}|${notes}`);
+  const cached = cacheGet(cacheKey);
+  if (cached) {
+    renderVerdict(cached.verdict, {fromCache: true, cachedAt: cached.timestamp, mode: cached.mode});
+    return;
+  }
+
   analyseBtn.disabled = true;
-  analyseBtn.innerHTML = `<span class="spinner"></span>Analysing…`;
+  analyseBtn.innerHTML = `<span class="spinner"></span>Analysing (${currentMode})…`;
 
   try {
     const userMessage = [
@@ -499,7 +777,7 @@ analyseBtn.onclick = async () => {
       })),
       {
         type: 'text',
-        text: `Charity-shop asking price: £${askPrice.toFixed(2)}\n\nOptional notes from Jose: ${notes || '(none)'}\n\nGive the verdict in the strict JSON format.`
+        text: `${notes ? `Notes from Jose: ${notes}\n\n` : ''}Return the strict JSON.`
       }
     ];
 
@@ -512,9 +790,9 @@ analyseBtn.onclick = async () => {
         'anthropic-dangerous-direct-browser-access': 'true'
       },
       body: JSON.stringify({
-        model,
-        max_tokens: 2000,
-        system: buildSystemPrompt(),
+        model: MODELS[currentMode],
+        max_tokens: 800,
+        system: buildVisionPrompt(),
         messages: [{role: 'user', content: userMessage}]
       })
     });
@@ -526,15 +804,19 @@ analyseBtn.onclick = async () => {
 
     const data = await response.json();
     const text = data.content?.[0]?.text || '';
-    let verdict;
+    let attrs;
     try {
-      // Strip code fences if model added any
       const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
-      verdict = JSON.parse(cleaned);
+      // Find first {...} JSON block in case model added prose
+      const m = cleaned.match(/\{[\s\S]*\}/);
+      attrs = JSON.parse(m ? m[0] : cleaned);
     } catch (e) {
-      throw new Error(`Couldn't parse JSON from model. Raw response:\n${text.slice(0, 500)}`);
+      throw new Error(`Couldn't parse JSON. Raw response:\n${text.slice(0, 400)}`);
     }
-    renderVerdict(verdict);
+
+    const verdict = computeVerdict(attrs, askPrice);
+    cacheSet(cacheKey, verdict, currentMode);
+    renderVerdict(verdict, {fromCache: false, mode: currentMode, usage: data.usage});
   } catch (err) {
     resultDiv.innerHTML = `<div class="err"><strong>Error:</strong> ${err.message}</div>`;
   } finally {
@@ -548,7 +830,17 @@ function gbp(n) {
   return '£' + Number(n).toFixed(2);
 }
 
-function renderVerdict(v) {
+function estimateCost(usage, mode) {
+  if (!usage) return null;
+  const rates = mode === 'cheap'
+    ? {input: 1, output: 5}
+    : {input: 3, output: 15};
+  // Pence per call: tokens × $/MT × 100p/$ × ~0.79 (USD→GBP rough)
+  const pCost = ((usage.input_tokens * rates.input + usage.output_tokens * rates.output) / 1e6) * 100 * 0.79;
+  return pCost.toFixed(2) + 'p';
+}
+
+function renderVerdict(v, meta) {
   const tierClass = `t${v.tier}`;
   const ext = v.extracted || {};
   const p = v.pricing || {};
@@ -556,7 +848,20 @@ function renderVerdict(v) {
   const comps = v.comparables_used || [];
   const steps = v.reasoning_steps || [];
 
+  let cacheBanner = '';
+  if (meta?.fromCache) {
+    const ago = Math.round((Date.now() - meta.cachedAt) / (1000 * 60));
+    const agoStr = ago < 60 ? `${ago}m ago` : ago < 1440 ? `${Math.round(ago/60)}h ago` : `${Math.round(ago/1440)}d ago`;
+    cacheBanner = `<div class="cache-banner">⚡ Cached verdict (${meta.mode} mode, ${agoStr}) · 0p
+      <button id="reanalyse">Re-analyse fresh</button></div>`;
+  }
+
+  const costLine = !meta?.fromCache && meta?.usage
+    ? `<div class="cost-line">~${estimateCost(meta.usage, meta.mode)} this scan · ${meta.usage.input_tokens}+${meta.usage.output_tokens} tokens · ${meta.mode}</div>`
+    : '';
+
   const html = `
+    ${cacheBanner}
     <div class="verdict ${tierClass}">
       <div class="tier">Tier ${v.tier} · ${v.tier_label} <span class="pill">${v.confidence || 'medium'} confidence</span></div>
       <div class="headline">${v.headline || ''}</div>
@@ -570,6 +875,7 @@ function renderVerdict(v) {
         <div class="k" style="font-weight:700">Expected net profit</div><div class="v" style="font-size:18px">${gbp(p.expected_net_profit)}</div>
       </div>
     </div>
+    ${costLine}
 
     <details open>
       <summary>What the model saw</summary>
@@ -597,8 +903,9 @@ function renderVerdict(v) {
     <details>
       <summary>Adjustments applied</summary>
       <div class="num-grid">
-        <div class="k">Seasonality multiplier</div><div class="v">${adj.seasonality_multiplier ?? '–'}×</div>
-        <div class="k">Uniqueness multiplier</div><div class="v">${adj.uniqueness_multiplier ?? '–'}×</div>
+        <div class="k">Condition</div><div class="v">${adj.condition_multiplier ?? '–'}×</div>
+        <div class="k">Seasonality</div><div class="v">${adj.seasonality_multiplier ?? '–'}×</div>
+        <div class="k">Uniqueness</div><div class="v">${adj.uniqueness_multiplier ?? '–'}×</div>
         <div class="k">Stock-glut penalty</div><div class="v">${adj.stock_glut_penalty ?? '–'}×</div>
       </div>
       <p style="font-size:13px; color:var(--muted); margin-top:4px;">${adj.applied_notes || ''}</p>
@@ -617,7 +924,17 @@ function renderVerdict(v) {
     </details>
   `;
   resultDiv.innerHTML = html;
-  // Scroll verdict into view
+  const re = document.getElementById('reanalyse');
+  if (re) re.onclick = () => {
+    // Bypass cache by adjusting the key — easiest: clear this entry
+    const photoHashes = photos.map(p => p.dataUrl.length + ':' + p.dataUrl.slice(0, 200) + p.dataUrl.slice(-200)).join('|');
+    sha256Hex(`${DATA.asOfDate}|${currentMode}|${photoHashes}|${parseFloat(askPriceInput.value)}|${notesInput.value.trim()}`)
+      .then(k => {
+        const all = JSON.parse(localStorage.getItem('vv_cache') || '{}');
+        delete all[k]; localStorage.setItem('vv_cache', JSON.stringify(all));
+        analyseBtn.click();
+      });
+  };
   resultDiv.scrollIntoView({behavior: 'smooth', block: 'start'});
 }
 </script>
